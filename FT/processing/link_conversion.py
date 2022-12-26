@@ -1,4 +1,11 @@
-""" This code converts twitter links to add fx and remove extra unneeded info """
+""" 
+    This code converts twitter links to add fx and remove extra unneeded info 
+    
+    Example conversion would be talking a link like
+    'https://twitter.com/NASA/status/1606323406965817344?cxt=HHwWgIC-qZio58osAAAA'
+    and converting it to
+    'https://fxtwitter.com/NASA/status/1606323406965817344'
+"""
 import os, sys
 
 IS_SPOILER: bool = True
