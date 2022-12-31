@@ -6,6 +6,9 @@ __pycache__/
 # C extensions
 *.so
 
+# VSCode
+.vscode
+
 # Distribution / packaging
 .Python
 build/
@@ -130,3 +133,11 @@ dmypy.json
 
 # Text files
 links.txt
+auth.txt
+
+# CSV files
+*.csv
+
+# Build
+Pipfile
+Pipfile.lock
