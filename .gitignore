@@ -141,3 +141,11 @@ auth.txt
 # Build
 Pipfile
 Pipfile.lock
+
+# Testing
+link_data.py
+diff_scrape.py
+
+# Json files
+*.json
+*.txt
