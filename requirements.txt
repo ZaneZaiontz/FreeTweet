@@ -1,0 +1,14 @@
+aiohttp
+aiodns
+beautifulsoup4
+cchardet
+elasticsearch
+pysocks
+pandas #>=0.23.0
+aiohttp_socks
+schedule
+geopy
+fake-useragent
+twint
+discord
+# git+https://github.com/twintproject/twint.git@origin/master#egg=twint
