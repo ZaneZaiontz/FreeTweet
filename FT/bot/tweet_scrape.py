@@ -1,218 +1,161 @@
 """
     This file handles scriping twitter data and planning for future uses. The main purpose of this is to pull data from creators to be 
     posted to a discord channel and update the users who requested it.
-    
-    NOTES:
-        - Use Twint to get tweet data, as it uses the 'unofficial' Twitter API, which saves on personal WS
-        - use https://syndication.twitter.com/timeline/profile?suppress_response_codes=true&screen_name=<PERSON NAME HERE>&with_replies=false&with_retweets=false
-            to bypass 18+ if possible, need to parse data
-    
+
     Future features:
         - Ability to follow creators
         - Ability to unfollow creators
+        - Add class that keeps track of server follows
         - Auto-update for Twitter timeline
-            - Ability to filter what types of tweets are posted by the bot (such as only images, only replies, etc.)
+        - Ability to filter what types of tweets are posted by the bot (such as only images, only replies, etc.)
         - Upon following, ability to post the last X number of posts (most likely will have a 5 tweet limit to start)
         - Set auto-update frequency (For now with a min time of every 5 minutes)
         - Ability to check tweet record and ONLY post new posts that the bot has yet to post
         - Flags set per creator, such as if the work should be posted with a spoiler tag
         - Ability to scan tweet and alert server/users depending on what the tweet says
-            - EX: If you're looking for the words "comissions open!", the bot will @ the user(s) who want to be notified
-        - POSSIBLE Api setup that can be sent user data and get only what's needed
-        
+        - If you're looking for the word combinations, the bot will @ the user(s) who want to be notified
+
     TODO:
-        - Document code corrently
-        - Add correct types
-        - Finish adding correct functionality for main loop
-        - Clean everything up, god it looks horrible 
-        - Please 
-        - Additional features
-        - Really clearn stuff up
-        - Move files around and have real main function
+        - Add threading
+        - Change link depending on gallery-gif or gallery-video
+        - Add '/' command
 """
+import os
+import logging
 import twint
-import discord
 import pandas
-from processing import link_conversion
-import asyncio
-import nest_asyncio
+from main import FreeBot
+import bot.processing.alt_data_fetch as extra_data
+from .processing import link_conversion
 
-
-class FreeBot:
-    def __init__(self):
-        self.TOKEN = open("../data/auth.txt", "r").readline()
-        
-def run_bot():
+def get_tweet(free_bot: FreeBot) -> list[str]:
     """
-        TODO
+        Function uses twint to pull tweets from requested user, if user needs additional data, 
+        pulls from private nitter instance if available
+
+        :prarm username: Name of the user being looked up
+        :prarm num_tweets: Number of tweets pulls *Keep around MAX 20 tweets*
+        :prarm fetch_missing: Bool used as a flag if the user will wants data scrapped from nitter
+
+        :returns: A tuple containing the list of tweets and a status code
     """
-    freeBot = FreeBot()
-    intent = discord.Intents.default()
-    intent.message_content = True
-    client = discord.Client(intents=intent)
-    
-    @client.event
-    async def on_ready():
-        print(f"{client.user} is now running!")
-        
-    @client.event
-    async def on_message(message):
-        if message.author == client.user:
-            return
-        username = str(message.author)
-        user_message = str(message.content)
-        channel = str(message.channel)
-        
-        print(f"{username} said: '{user_message}' ({channel})")
-        
-        if user_message[0] == '>':
-            handle_user_message(user_message)
-            # try:
-            #     user_message = user_message[1:]
-            #     message_tokens = user_message.split()
-            #     if message_tokens[0] == "get-tweet":
-            #         print(message_tokens[1])
-            #         links = temp_get_tweet(message_tokens[1])
-            #         if links == None:
-            #             await send_message(message, "Error, no tweets found", is_private=False, is_tweet=True)
-            #         else:
-            #             for link in links:
-            #                 await send_message(message, link, is_private=False, is_tweet=True)
-            #     else:
-            #         await send_message(message, user_message, is_private=False, is_tweet=True)
-            # except Exception as e:
-            #     print(e)
-            #     await send_message(message, user_message, is_private=False, is_tweet=True)
-        # elif user_message[0] == '-':
-        #     user_message = user_message[1:]
-        #     await send_message(message, user_message, is_private=True)
-        # else:
-        #     await send_message(message, user_message, is_private=False)
-    
-    client.run(freeBot.TOKEN)
+    fin_output = []
+    if free_bot.get_additional():
+        fin_output = get_missing_tweets(free_bot)
+    else:
+        test_driver = twint.Config()
+        test_driver.Hide_output = True
+        test_driver.Username = free_bot.get_username()
+        test_driver.Pandas = True
+        test_driver.Limit = 30
+        test_driver.Profile_full = True
+        try:
+            twint.run.Search(test_driver)
+        except Exception as error_fetching:
+            logging.exception(f"Error fetching data from twitter [{error_fetching}]!\n" +
+                            "Does the user have their tweets viewable?")
 
-def temp_get_tweet(message:str="khyleri", num_tweets:int = 1) -> list[str]:
-    test_driver = twint.Config()
-    test_driver.Hide_output = True
-    test_driver.Username = message
-    test_driver.Pandas = True
-    test_driver.Limit = 50
-    test_driver.Profile_full = True
-    # test_driver.User_full = True
-    # test_driver.Images = True
-    twint.run.Search(test_driver)
+        output = twint.storage.panda.Tweets_df
+        logging.info(f">>>>>>>>>>\n{output}\n")
 
-    output = twint.storage.panda.Tweets_df
-    output.to_csv("test.csv")
-    
-    print(f"\n{output}\n")
-    fin_output = temp_get_tweet_with_image(output)
-    # for i in range(num_tweets):
-    # link_part = output.loc[0].link
-    # print(f"GOT\n{link_part}")
-    # link_fixed = link_conversion.fix_links(link_part)
-    # print(link_fixed)
+        if len(output) < 1:
+            logging.error(f"ERROR >> {output}")
+            free_bot.set_status(3)
+            return []
+        fin_output = get_normal_tweet(df=output, num=free_bot.get_num_tweets())
+
+    if not fin_output:
+        logging.warning("No tweets found, returning...")
+        return fin_output
+
+    logging.info(f"function get_tweet is returning \n{fin_output}")
+    free_bot.set_tweets(fin_output)
     return fin_output
 
-def temp_get_tweet_with_image(df, num = 3) -> list[str]:
+def check_if_user_exists(username) -> bool:
     """
-    
+    Checks if user exists by running twint on given username
+
+    :param username: Name to check
+    """
+    try:
+        user_check = twint.Config()
+        user_check.Hide_output = True
+        user_check.Username = username
+        user_check.Limit = 1
+        twint.run.Search(user_check)
+    except Exception as user_find_error:
+        logging.exception(f"USER DOES NOT EXIST {user_find_error}")
+        return False
+    logging.info("USER DOES EXIST")
+    return True
+
+def get_normal_tweet(df: pandas.DataFrame, num: int = 1) -> list[str]:
+    """
         While the current number of grabbed pictures doesn't exceed the num
         OR
-        While the current index isn't greater than the length of the list 
-        
-        https://github.com/twintproject/twint/issues/1253#issuecomment-913055717
-        
+        While the current index isn't greater than the length of the list
     """
-    num_of_images: int = 0
+    num_of_tweets: int = 0
     tweets = []
     for i in range(len(df)):
-        # print(str(df.loc[i].tweet).find("https://t.co/"))
-        if num_of_images >= num:
+        logging.info(tweets)
+        if num_of_tweets >= num:
             break
-        elif str(df.loc[i].tweet).find("https://t.co/") != -1:
-            tweets.append(link_conversion.fix_links(df.loc[i].link))
-            num_of_images = num_of_images + 1
-            print("IN HERE")
-        # if "https://t.co/" in df.loc[index_loc].tweet:
-        #     tweets.append(link_conversion.fix_links(df.loc[index_loc].link))
-        #     num_of_images += 1
-        # tweets.append(link_conversion.fix_links(df.loc[i].link))
-        # print(f"{num_of_images} NUM OF IMAGES < {num}\n{index_loc} LESS THAN {len(df)}")
+        logging.info(f"ADDING: {tweets}")
+        tweets.append(link_conversion.fix_links(df.loc[i].link))
+        num_of_tweets = num_of_tweets + 1
+    logging.info(f"List of tweets gotten {tweets}")
     return tweets
 
-async def handle_user_message(message: str) -> None:
-    try:
-        user_message = user_message[1:]
-        message_tokens = user_message.split()
-        if message_tokens[0] == "get-tweet":
-            print(message_tokens[1])
-            links = temp_get_tweet(message_tokens[1])
-            if links == None:
-                await send_message(message, "Error, no tweets found", is_private=False, is_tweet=True)
-            else:
-                for link in links:
-                    await send_message(message, link, is_private=False, is_tweet=True)
-        else:
-            await send_message(message, user_message, is_private=False, is_tweet=True)
-    except Exception as e:
-        print(e)
-        await send_message(message, user_message, is_private=False, is_tweet=True)
-
-
-
-
-async def send_message(message, user_message, is_private, is_tweet = False):
+def get_single_missing(username: str) -> list[str]:
     """
-        TODO
+    Function returns the 10 most recent tweets, IDs only
     """
-    if is_tweet:
-        try:
-            await message.channel.send(user_message)
-        except Exception as e:
-            print(e)
-        pass
-    else:
-        try:
-            response = get_response(user_message)
-            await message.author.send(response) if is_private else await message.channel.send(response)
-        except Exception as e:
-            print(e)
-
-def get_detailed_response(message: str) -> str:
-    """
-    TODO
     
-    Args:
-        message (str): _description_
+    num = 10
+    new_list: list[str] = []
+    missing_data = extra_data.pull_and_process_data(username, num)
 
-    Returns:
-        str: _description_
+    all_links = missing_data.get_all_ids()
+    all_links.sort(reverse=True)
+    
+    if not all_links:
+        return new_list
+
+    # new_list = [(f"https://fxtwitter.com/{username}/status/{x}") for x in all_links]
+    # print("TEMP>" + new_list)
+    return all_links
+
+def get_missing_tweets(free_bot: FreeBot) -> list[str]:
     """
-    message_tok = message.split()
-    
-    match len(message_tok):
-        case 0:
-            pass
-        case 1:
-            print(f"ONLY SUPPLIED {message_tok[0]}, NEED MORE DATA")
-        case 2:
-            pass
-        case 3:
-            pass
-        case default:
-            pass
-    
-    
-def get_response(message: str) -> str:
+    Function gets the tweets that are usually missed by twint.
+
+    :param free_bot: Stores 
+    :param num_tweets: Number of tweets to go back and grab
+    :param missing_data: A_data class containing data fetched from nitter
+    :param new_list: List of links to be returned
+
+    :returns: List of tweets
     """
-        Old responces, will be changed out for get_detailed_response in future version
-    """
-    l_message = message.lower()
+    new_list: list[str] = []
+    missing_data = extra_data.pull_and_process_data(free_bot.get_username(), free_bot.get_num_tweets())
+    logging.debug(f"All current links in get_missing_tweetsDid we get all data? ->{missing_data.got_all_requested}\n{missing_data.get_all_ids()}")
+
+    all_links = missing_data.get_all_ids()
+    all_links.sort(reverse=True)
     
-    if l_message == "test":
-        return "Got it!"
+    logging.debug(f"WE GOT >>>> {all_links}")
+    if not missing_data.get_all_req():
+        logging.warning(f"WE ONLY HAVE {len(all_links)} LINKS BUT REQUESTED {free_bot.get_num_tweets()}")
+
+    # FUTURE NOTE: CHANGE FUNCTION TO RETURN TUPLE WITH A STATUS CODE
+    if not all_links:
+        return new_list
+
+    new_list = [(f"https://fxtwitter.com/{free_bot.get_username()}/status/{x}") for x in all_links]
+    print(new_list)
+    return new_list[:free_bot.get_num_tweets()]
 
 if __name__ == "__main__":
-    nest_asyncio.apply()
-    run_bot()
+    os.exit(0)
